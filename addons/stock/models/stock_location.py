@@ -121,8 +121,8 @@ class Location(models.Model):
                     _('Configuration Error of Branch:\n'
                       'The Location Branch (%s) and '
                       'the Branch (%s) of Parent Location must '
-                      'be the same branch!') % (recordord.branch_id.name,
-                                                recordord.location_id.branch_id.name)
+                      'be the same branch!') % (record.branch_id.name,
+                                                record.location_id.branch_id.name)
                 )
 
     @api.multi
@@ -235,7 +235,7 @@ class Route(models.Model):
     @api.onchange('warehouse_selectable')
     def _onchange_warehouse_selectable(self):
         if not self.warehouse_selectable:
-            self.warehouse_ids = []
+            self.warehouse_ids = [(5, 0, 0)]
 
     def write(self, values):
         '''when a route is deactivated, deactivate also its pull and push rules'''

@@ -280,13 +280,15 @@ class WebRequest(object):
         _request_stack.pop()
 
         if self._cr:
-            if exc_type is None and not self._failed:
-                self._cr.commit()
-                if self.registry:
-                    self.registry.signal_changes()
-            elif self.registry:
-                self.registry.reset_changes()
-            self._cr.close()
+            try:
+                if exc_type is None and not self._failed:
+                    self._cr.commit()
+                    if self.registry:
+                        self.registry.signal_changes()
+                elif self.registry:
+                    self.registry.reset_changes()
+            finally:
+                self._cr.close()
         # just to be sure no one tries to re-use the request
         self.disable_db = True
         self.uid = None
@@ -355,6 +357,9 @@ class WebRequest(object):
         # check if request from rpc in debug mode
         if not debug:
             debug = self.httprequest.environ.get('HTTP_X_DEBUG_MODE')
+
+        if not debug:
+            debug = os.environ.get('FLECTRA_DEBUG_MODE')
 
         if not debug and self.httprequest.referrer:
             debug = 'debug' in urls.url_parse(self.httprequest.referrer).decode_query()
@@ -1305,8 +1310,7 @@ class Root(object):
         # Setup http sessions
         path = flectra.tools.config.session_dir
         _logger.debug('HTTP sessions stored in: %s', path)
-        return werkzeug.contrib.sessions.FilesystemSessionStore(
-            path, session_class=OpenERPSession, renew_missing=True)
+        return werkzeug.contrib.sessions.FilesystemSessionStore(path, session_class=OpenERPSession)
 
     @lazy_property
     def nodb_routing_map(self):
@@ -1654,7 +1658,7 @@ def send_file(filepath_or_fp, mimetype=None, as_attachment=False, filename=None,
 
 def content_disposition(filename):
     filename = flectra.tools.ustr(filename)
-    escaped = urls.url_quote(filename, safe='')
+    escaped = urls.url_quote(filename)
 
     return "attachment; filename*=UTF-8''%s" % escaped
 

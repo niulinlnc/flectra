@@ -2,11 +2,10 @@
 # Part of Odoo, Flectra. See LICENSE file for full copyright and licensing details.
 
 from lxml import etree
-
+from datetime import date, timedelta
 from flectra import api, fields, models, tools, SUPERUSER_ID, _
 from flectra.exceptions import UserError, AccessError, ValidationError
 from flectra.tools.safe_eval import safe_eval
-from datetime import timedelta, date
 
 
 class ProjectTaskType(models.Model):
@@ -234,15 +233,21 @@ class Project(models.Model):
     @api.multi
     def map_tasks(self, new_project_id):
         """ copy and map tasks from old to new project """
-        tasks = self.env['project.task']
         # We want to copy archived task, but do not propagate an active_test context key
-        task_ids = self.env['project.task'].with_context(active_test=False).search([('project_id', '=', self.id)]).ids
+        task_ids = self.env['project.task'].with_context(active_test=False).search([('project_id', '=', self.id)], order='parent_id').ids
+        old_to_new_tasks = {}
         for task in self.env['project.task'].browse(task_ids):
             # preserve task name and stage, normally altered during copy
             defaults = {'stage_id': task.stage_id.id,
                         'name': task.name}
-            tasks += task.copy(defaults)
-        return self.browse(new_project_id).write({'tasks': [(6, 0, tasks.ids)]})
+            parent_id = old_to_new_tasks.get(task.parent_id.id, False) if task.parent_id else False
+            project_id = (new_project_id if not parent_id else
+                          self.env['project.project'].browse(new_project_id).subtask_project_id.id)
+            defaults['parent_id'] = parent_id
+            defaults['project_id'] = project_id
+            new_task = task.copy(defaults)
+            old_to_new_tasks[task.id] = new_task.id
+        return True
 
     @api.multi
     def copy(self, default=None):
@@ -251,6 +256,8 @@ class Project(models.Model):
         if not default.get('name'):
             default['name'] = _("%s (copy)") % (self.name)
         project = super(Project, self).copy(default)
+        if self.subtask_project_id == self:
+            project.subtask_project_id = project
         for follower in self.message_follower_ids:
             project.message_subscribe(partner_ids=follower.partner_id.ids, subtype_ids=follower.subtype_ids.ids)
         if 'tasks' not in default:
@@ -375,7 +382,7 @@ class Task(models.Model):
     _date_name = "date_start"
     _inherit = ['mail.thread', 'mail.activity.mixin', 'portal.mixin', 'ir.branch.company.mixin']
     _mail_post_access = 'read'
-    _order = "priority desc, sequence, id desc"
+    _order = "priority, sequence, id desc"
 
     def _get_default_partner(self):
         if 'default_project_id' in self.env.context:
@@ -408,10 +415,10 @@ class Task(models.Model):
     name = fields.Char(string='Task Title', track_visibility='always', required=True, index=True)
     description = fields.Html(string='Description')
     priority = fields.Selection([
-        ('l', 'Low'),
-        ('m', 'Medium'),
-        ('h', 'High')
-        ], default='l', index=True, string="Priority")
+        ('2', 'Low'),
+        ('1', 'Medium'),
+        ('0', 'High')
+        ], default='2', index=True, string="Priority")
     sequence = fields.Integer(string='Sequence', index=True, default=10,
         help="Gives the sequence order when displaying a list of tasks.")
     stage_id = fields.Many2one('project.task.type', string='Stage', track_visibility='onchange', index=True,
@@ -499,9 +506,9 @@ class Task(models.Model):
     def task_deadline(self):
         if self.project_id and self.priority:
             days = 0
-            if self.priority == "l":
+            if self.priority == "2":
                 days = int(self.project_id.low)
-            elif self.priority == "m":
+            elif self.priority == "1":
                 days = int(self.project_id.medium)
             else:
                 days = int(self.project_id.high)
